@@ -1,0 +1,211 @@
+---
+title: "N. Fowleri"
+author: "Mercy Neal"
+date: "2025-09-19"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Below is the code for a N. Fowleri risk assessment. I first go through it forward, and then I go through it backwards starting with risk benchmarks. Benchmarks are stated at bottom. 
+```{r}
+#Loading In Libraries
+library(tidyverse)
+library(ggplot2)
+library(purrr)
+library(EnvStats)
+```
+
+```{r}
+##Constants
+dw<- 0.615 #for meningitis
+dwsurvive <- 0.15
+LE <- 59.4
+ProbDeathGivenIll <- 0.98
+YLD <- 0.03
+DALYsurvivor <- 0.15
+alpha <- 1.59
+N50 <- 156
+```
+
+
+```{r}
+##Exposure model
+samp = 10000
+seed = 12345
+
+swimmingmc <- function(fsamp, fseed){
+    if (!is.null(fseed)) {
+    set.seed(fseed)
+  } else {
+    warning("No seed provided!", call. = FALSE)
+    seed <- sample.int(10000, 1)
+    set.seed(seed)
+    message("Random seed = ", seed, "\n")
+  }
+  swimmingdist <- rtri(fsamp, min = 0.1, max = 10, mode = 1)
+  concnf <- rnorm(fsamp, mean = 0.1, sd = .025) 
+  instilledconc <- concnf * swimmingdist
+    #Note: this triangular distribution describes exposure in mL per event. To get to a usable number for QMRA, have to multiply by     concentration: CFU/mL. In this initial case, I assumed 0.1 CFU/mL, and 0.025 SD with a normal distribution. I'll calculate backwards for set risk at the bottom. 
+  return(instilledconc)
+}
+
+swimmingconcs <- swimmingmc(samp,seed)
+```
+
+
+```{r}
+#Dose Response
+## Beta-Poisson Distribution annual risk
+doseresponsebp <- function(a, nfifty, d){
+  infdaily2 <- 1 - ((1 + d*((2^(1/a)-1)/nfifty))^-a)
+  return(infdaily2)
+}
+
+#This represents risk if you swim every day
+prob <- doseresponsebp(alpha, N50, swimmingconcs)
+probdf <- as.data.frame(prob)
+```
+
+
+```{r}
+#DALY code - assumes you're only exposed once a year
+
+DALYcalc <- function(annprob){
+  resultstable <- data.frame(dalylost = numeric(length(annprob)))
+  
+  for (i in 1:length(annprob)) {
+    DALY <- ((ProbDeathGivenIll)*LE*annprob[i]) + 
+            ((dwsurvive*annprob[i]*(1-ProbDeathGivenIll)) + 
+             (dw*YLD*ProbDeathGivenIll*annprob[i]))
+    
+    resultstable$dalylost[i] <- DALY
+  }
+  return(resultstable)
+}
+
+DALYslost <-DALYcalc(prob)
+```
+
+This is the DALY loss and probability distribution from a single event in their triangular model. 
+```{r}
+#10k iterations for each
+DALYhist <- ggplot(DALYslost, aes(x=dalylost)) +geom_histogram(binwidth = 0.005)+theme_linedraw() + labs(title = "DALYs lost to Single Exposure")
+probhist <-ggplot(probdf, aes(x=prob)) +geom_histogram(binwidth = 0.00005) +theme_linedraw() + labs(title = "Probability of Infection Single Exposure")
+
+DALYhist
+probhist
+```
+Summary quantiles DALYs
+
+```{r}
+##DALY Summary
+
+summary_quantiles <- function(data) {
+    quantile_summary <- quantile(data, probs = c(0, 0.05, 0.25, 0.5, 0.75, 0.95, 1), na.rm = TRUE)
+  return(quantile_summary)
+}
+##Call above function
+quantiles <- summary_quantiles(DALYslost)
+quantiles
+
+```
+
+Below are Infection Benchmarks given levels of risk:
+
+```{r}
+#Set a benchmark at 10^-4, 10^-6 and 10^-8 DALYs
+
+#Working backwards
+annualDALYloss <- 10^-4
+
+
+DALYtoProb <- function(dalylosses) {
+  resultstable <- data.frame(annprob = numeric(length(dalylosses)))
+  
+  # Precompute the DALY factor
+  DALYfactor <- (ProbDeathGivenIll * LE) + 
+                (dwsurvive * (1 - ProbDeathGivenIll)) + 
+                (dw * YLD * ProbDeathGivenIll)
+  
+  for (i in 1:length(dalylosses)) {
+    annprob <- dalylosses[i] / DALYfactor
+    resultstable$annprob[i] <- annprob
+  }
+  
+  return(resultstable)
+}
+probannrisk <- DALYtoProb(annualDALYloss)
+probannrisk
+#infection risk given DALY value
+
+```
+
+```{r}
+#Assuming you swim 7 times a year in this body of water
+n = 7
+
+eventexposurerisk<- 1-((1-probannrisk)^(1/n))
+
+doseresponsebprev <- function(a, nfifty, dayprob){
+  d <- ((1 - dayprob)^(-1/a) - 1) / ((2^(1/a) - 1) / nfifty)
+  return(d)
+}
+
+dosetarget <- doseresponsebprev(alpha, N50, eventexposurerisk)
+
+#So what does the concentration in the body of water need to be, given our triangular assumption?
+#CFU -> mL (Want to know what the mL is) (Whats the endpoint?)
+#instilledconc/swimmingdist = targetconc CFU/ml
+```
+
+
+
+```{r}
+
+##Exposure model
+samp = 10000
+seed = 12345
+
+targetconcentration <- function(fsamp, fseed, instilledconc){
+    if (!is.null(fseed)) {
+    set.seed(fseed)
+  } else {
+    warning("No seed provided!", call. = FALSE)
+    seed <- sample.int(10000, 1)
+    set.seed(seed)
+    message("Random seed = ", seed, "\n")
+  }
+  
+  swimmingdist <- rtri(fsamp, min = 0.1, max = 10, mode = 1)
+  targconc <- data.frame(concentration = numeric(fsamp))
+  for (i in 1:length(swimmingdist)){
+    targconc$concentration[i] <- instilledconc / swimmingdist[i]
+  }
+  
+  return(targconc)
+}
+
+targetconcfinal <-targetconcentration(samp, seed, dosetarget)
+
+```
+
+```{r}
+
+summary_quantiles <- function(data) {
+    quantile_summary <- quantile(data, probs = c(0, 0.05, 0.25, 0.5, 0.75, 0.95, 1), na.rm = TRUE)
+  return(quantile_summary)
+}
+targetconcfinal$concentration <- unlist(targetconcfinal$concentration)
+targetquantiles <- summary_quantiles(targetconcfinal$concentration)
+targetquantiles
+
+```
+In order to get below x number of disability adjusted life years, the water concentration mean needs to be: (in CFU/mL) (or lower)
+10E-4: 1.312595e-05 CFU/mL
+10E-6: 1.312593e-07 CFU/mL
+10E-8: 1.312593e-09 CFU/mL
+
+
+
+
