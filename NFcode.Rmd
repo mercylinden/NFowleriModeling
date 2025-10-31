@@ -46,8 +46,9 @@ swimmingmc <- function(fsamp, fseed){
   swimmingdist <- rtri(fsamp, min = 0.1, max = 10, mode = 1)
   concnf <- rnorm(fsamp, mean = 0.1, sd = .025) 
   instilledconc <- concnf * swimmingdist
+  returndata <- tibble(swimmingdist, concnf, instilledconc)
     #Note: this triangular distribution describes exposure in mL per event. To get to a usable number for QMRA, have to multiply by     concentration: CFU/mL. In this initial case, I assumed 0.1 CFU/mL, and 0.025 SD with a normal distribution. I'll calculate backwards for set risk at the bottom. 
-  return(instilledconc)
+  return(returndata)
 }
 
 swimmingconcs <- swimmingmc(samp,seed)
@@ -63,8 +64,12 @@ doseresponsebp <- function(a, nfifty, d){
 }
 
 #This represents risk if you swim every day
-prob <- doseresponsebp(alpha, N50, swimmingconcs)
+prob <- doseresponsebp(alpha, N50, swimmingconcs$instilledconc)
 probdf <- as.data.frame(prob)
+dosedf <- swimmingconcs
+
+probdf$dose <- dosedf$instilledconc
+probdf$concentration <- dosedf$concnf
 ```
 
 
@@ -85,16 +90,19 @@ DALYcalc <- function(annprob){
 }
 
 DALYslost <-DALYcalc(prob)
+
+probdf$DALY <- DALYslost$dalylost
 ```
 
 This is the DALY loss and probability distribution from a single event in their triangular model. 
 ```{r}
 #10k iterations for each
-DALYhist <- ggplot(DALYslost, aes(x=dalylost)) +geom_histogram(binwidth = 0.005)+theme_linedraw() + labs(title = "DALYs lost to Single Exposure")
-probhist <-ggplot(probdf, aes(x=prob)) +geom_histogram(binwidth = 0.00005) +theme_linedraw() + labs(title = "Probability of Infection Single Exposure")
+probgraph <-ggplot(probdf, aes(x = log(dose), y = prob)) + geom_point() + labs(title = 'Log Concentration of N. Fowleri and Probability of Infection', x= 'Log MPN N. Fowleri', y = 'Single Exposure Infection Probability') + theme_classic()
 
-DALYhist
-probhist
+dalygraph <-ggplot(probdf, aes(x = log(dose), y = DALY)) + geom_point() + labs(title = 'Disability Adjusted Life Years Lost across Log N. Fowleri Concentrations', x = 'Log MPN N. Fowleri', y = 'DALYs Lost from Single Exposure') + theme_classic()
+
+probgraph
+dalygraph
 ```
 Summary quantiles DALYs
 
